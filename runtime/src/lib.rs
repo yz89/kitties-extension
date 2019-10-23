@@ -64,6 +64,8 @@ pub type DigestItem = generic::DigestItem<Hash>;
 /// Used for the module template in `./template.rs`
 mod template;
 
+mod kitties;
+
 mod mtp;
 
 /// Opaque types. These are used by the CLI to instantiate machinery that don't need to know
@@ -258,6 +260,10 @@ impl template::Trait for Runtime {
 	type Event = Event;
 }
 
+impl kitties::Trait for Runtime {
+	type Event = Event;
+}
+
 impl mtp::Trait for Runtime {
 
 }
@@ -277,6 +283,7 @@ construct_runtime!(
 		Sudo: sudo,
 		// Used for the module template in `./template.rs`
 		TemplateModule: template::{Module, Call, Storage, Event<T>},
+		Kitty: kitties::{Module, Call, Storage, Event<T>},
 		MTP: mtp::{Module, Call, Storage},
 	}
 );
