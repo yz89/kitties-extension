@@ -36,7 +36,7 @@ impl<T: Trait> Module<T> {
             _ => samples = [time; MAX_TIMESTAMP_SAMPLES].to_vec(),
         }
         samples.sort();
-        <MedianTimePast<T>>::put(samples[MAX_TIMESTAMP_SAMPLES / 2].clone());
+        <MedianTimePast<T>>::put(samples[MAX_TIMESTAMP_SAMPLES / 2]);
         <SampleTimestamps<T>>::put(samples);
     }
 }

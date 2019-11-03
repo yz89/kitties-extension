@@ -1,5 +1,6 @@
+use crate::mtp;
 use codec::{Decode, Encode};
-use rstd::cmp;
+use rstd::{ result, cmp};
 use sr_primitives::traits::{Hash, Zero};
 use support::{decl_event, decl_module, decl_storage, dispatch::Result,
               ensure, StorageMap, StorageValue, traits::Currency};
@@ -7,14 +8,24 @@ use system::ensure_signed;
 
 #[derive(Encode, Decode, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(Debug))]
-pub struct Kitty<Hash, Balance> {
+pub struct Kitty<Hash, Balance, Moment> {
     id: Hash,
     dna: Hash,
     price: Balance,
     gen: u64,
+    lifetime: Lifetime<Moment>,
 }
 
-pub trait Trait: balances::Trait {
+#[derive(Encode, Decode, Default, Clone, PartialEq)]
+#[cfg_attr(feature = "std", derive(Debug))]
+struct Lifetime<Moment> {
+    birth: Moment,
+    young: Moment,
+    old: Moment,
+    end: Moment,
+}
+
+pub trait Trait: balances::Trait + mtp::Trait {
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
 
@@ -34,7 +45,7 @@ decl_event!(
 
 decl_storage! {
     trait Store for Module<T: Trait> as KittyStorage {
-        Kitties get(kitty): map T::Hash => Kitty<T::Hash, T::Balance>;
+        Kitties get(kitty): map T::Hash => Kitty<T::Hash, T::Balance, T::Moment>;
         KittyOwner get(owner_of): map T::Hash => Option<T::AccountId>;
 
         AllKittiesArray get(kitty_by_index): map u64 => T::Hash;
@@ -65,6 +76,7 @@ decl_module! {
                 dna: random_hash,
                 price: Zero::zero(),
                 gen: 0,
+                lifetime: Self::generate_lifetime(random_hash)?,
             };
 
             Self::mint(sender, random_hash, new_kitty)?;
@@ -160,6 +172,7 @@ decl_module! {
                 dna: final_dna,
                 price: Zero::zero(),
                 gen: cmp::max(kitty_1.gen, kitty_2.gen) + 1,
+                lifetime: Self::generate_lifetime(final_dna)?,
             };
 
             Self::mint(sender, random_hash, new_kitty)?;
@@ -172,7 +185,19 @@ decl_module! {
 }
 
 impl<T: Trait> Module<T> {
-    fn mint(to: T::AccountId, kitty_id: T::Hash, new_kitty: Kitty<T::Hash, T::Balance>) -> Result {
+    fn generate_lifetime(_dna: T::Hash) -> result::Result<Lifetime<T::Moment>, &'static str> {
+        let mtp = <mtp::Module<T>>::median_time_past();
+        let lifetime = Lifetime {
+            birth: mtp,
+            young: mtp,
+            old: mtp,
+            end: mtp,
+        };
+
+        Ok(lifetime)
+    }
+
+    fn mint(to: T::AccountId, kitty_id: T::Hash, new_kitty: Kitty<T::Hash, T::Balance, T::Moment>) -> Result {
         ensure!(!<KittyOwner<T>>::exists(kitty_id), "Kitty already exists");
 
         let owned_kitty_count = Self::owned_kitty_count(&to);
