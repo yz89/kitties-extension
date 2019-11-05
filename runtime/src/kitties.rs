@@ -1,10 +1,23 @@
 use crate::mtp;
 use codec::{Decode, Encode};
-use rstd::{ result, cmp};
-use sr_primitives::traits::{Hash, Zero};
+use rstd::{result, cmp};
+use sr_primitives::traits::{Hash, Zero, SaturatedConversion};
 use support::{decl_event, decl_module, decl_storage, dispatch::Result,
               ensure, StorageMap, StorageValue, traits::Currency};
 use system::ensure_signed;
+use runtime_io::*;
+
+const ONE_MINUTE: u64 = 60000;
+const ONE_DAY: u64 = 86400000;
+const BASE_CHILDHOOD_FACTOR: u8 = 5;
+const BASE_MANHOOD_FACTOR: u8 = 10;
+const BASE_OLDNESS_FACTOR: u8 = 5;
+
+enum LifeStage {
+    Young,
+    Maturity,
+    Oldness,
+}
 
 #[derive(Encode, Decode, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(Debug))]
@@ -18,10 +31,10 @@ pub struct Kitty<Hash, Balance, Moment> {
 
 #[derive(Encode, Decode, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(Debug))]
-struct Lifetime<Moment> {
+pub struct Lifetime<Moment> {
     birth: Moment,
-    young: Moment,
-    old: Moment,
+    maturity: Moment,
+    oldness: Moment,
     end: Moment,
 }
 
@@ -185,13 +198,21 @@ decl_module! {
 }
 
 impl<T: Trait> Module<T> {
-    fn generate_lifetime(_dna: T::Hash) -> result::Result<Lifetime<T::Moment>, &'static str> {
+    fn generate_lifetime(dna: T::Hash) -> result::Result<Lifetime<T::Moment>, &'static str> {
         let mtp = <mtp::Module<T>>::median_time_past();
+        let birth = mtp.saturated_into::<u64>();
+        let maturity = birth.checked_add(ONE_MINUTE * (BASE_CHILDHOOD_FACTOR + dna.as_ref()[0]) as u64)
+            .ok_or("Overflow calculating the childhood for a new kitty")?;
+        let oldness = maturity.checked_add(ONE_MINUTE * (BASE_MANHOOD_FACTOR + dna.as_ref()[1])as u64)
+            .ok_or("Overflow calculating the manhood for a new kitty")?;
+        let end = oldness.checked_add(ONE_MINUTE * (BASE_OLDNESS_FACTOR + dna.as_ref()[2]) as u64)
+            .ok_or("Overflow calculating the oldness for a new kitty")?;
+
         let lifetime = Lifetime {
             birth: mtp,
-            young: mtp,
-            old: mtp,
-            end: mtp,
+            maturity: maturity.saturated_into(),
+            oldness: oldness.saturated_into(),
+            end: end.saturated_into(),
         };
 
         Ok(lifetime)
