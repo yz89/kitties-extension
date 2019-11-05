@@ -1,0 +1,12 @@
+{
+  "Kitty": {
+    "id": "H256",
+    "dna": "H256",
+    "price": "Balance",
+    "gen": "u64",
+    "birth": "Moment",
+    "maturity": "Moment",
+    "oldness": "Moment",
+    "end": "Moment"
+  }
+}

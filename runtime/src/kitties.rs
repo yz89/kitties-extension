@@ -13,10 +13,12 @@ const BASE_CHILDHOOD_FACTOR: u8 = 5;
 const BASE_MANHOOD_FACTOR: u8 = 10;
 const BASE_OLDNESS_FACTOR: u8 = 5;
 
+#[derive(PartialEq)]
 enum LifeStage {
     Young,
     Maturity,
     Oldness,
+    Invalid,
 }
 
 #[derive(Encode, Decode, Default, Clone, PartialEq)]
@@ -108,6 +110,9 @@ decl_module! {
             ensure!(owner == sender, "You do not own this cat");
 
             let mut kitty = Self::kitty(kitty_id);
+            ensure!(Self::could_transfer(&kitty),
+                "This cat is not in the life stage that can be transferred");
+
             kitty.price = new_price;
 
             <Kitties<T>>::insert(kitty_id, kitty);
@@ -122,6 +127,10 @@ decl_module! {
 
             let owner = Self::owner_of(kitty_id).ok_or("No owner for this kitty")?;
             ensure!(owner == sender, "You do not own this kitty");
+
+            let kitty = Self::kitty(kitty_id);
+            ensure!(Self::could_transfer(&kitty),
+                "This cat is not in the life stage that can be transferred");
 
             Self::transfer_from(sender, to, kitty_id)?;
 
@@ -166,12 +175,17 @@ decl_module! {
             ensure!(<Kitties<T>>::exists(kitty_id_1), "This cat 1 does not exist");
             ensure!(<Kitties<T>>::exists(kitty_id_2), "This cat 2 does not exist");
 
+            let kitty_1 = Self::kitty(kitty_id_1);
+            let kitty_2 = Self::kitty(kitty_id_2);
+
+            ensure!(Self::could_breed(&kitty_1),
+                "This cat 1 is not in the life stage that can be breed");
+            ensure!(Self::could_breed(&kitty_2),
+                "This cat 2 is not in the life stage that can be breed");
+
             let nonce = <Nonce>::get();
             let random_hash = (<system::Module<T>>::random_seed(), &sender, nonce)
                 .using_encoded(<T as system::Trait>::Hashing::hash);
-
-            let kitty_1 = Self::kitty(kitty_id_1);
-            let kitty_2 = Self::kitty(kitty_id_2);
 
             let mut final_dna = kitty_1.dna;
             for (i, dna_2_element) in kitty_2.dna.as_ref().iter().enumerate() {
@@ -203,7 +217,7 @@ impl<T: Trait> Module<T> {
         let birth = mtp.saturated_into::<u64>();
         let maturity = birth.checked_add(ONE_MINUTE * (BASE_CHILDHOOD_FACTOR + dna.as_ref()[0]) as u64)
             .ok_or("Overflow calculating the childhood for a new kitty")?;
-        let oldness = maturity.checked_add(ONE_MINUTE * (BASE_MANHOOD_FACTOR + dna.as_ref()[1])as u64)
+        let oldness = maturity.checked_add(ONE_MINUTE * (BASE_MANHOOD_FACTOR + dna.as_ref()[1]) as u64)
             .ok_or("Overflow calculating the manhood for a new kitty")?;
         let end = oldness.checked_add(ONE_MINUTE * (BASE_OLDNESS_FACTOR + dna.as_ref()[2]) as u64)
             .ok_or("Overflow calculating the oldness for a new kitty")?;
@@ -216,6 +230,37 @@ impl<T: Trait> Module<T> {
         };
 
         Ok(lifetime)
+    }
+
+    fn life_stage(lifetime: &Lifetime<T::Moment>) -> LifeStage {
+        let mtp = <mtp::Module<T>>::median_time_past();
+        if mtp.cmp(&lifetime.birth) == cmp::Ordering::Less {
+            LifeStage::Invalid
+        } else if mtp.cmp(&lifetime.maturity) == cmp::Ordering::Less {
+            LifeStage::Young
+        } else if mtp.cmp(&lifetime.oldness) == cmp::Ordering::Less {
+            LifeStage::Maturity
+        } else if mtp.cmp(&lifetime.end) == cmp::Ordering::Less {
+            LifeStage::Oldness
+        } else {
+            LifeStage::Invalid
+        }
+    }
+
+    fn could_breed(kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
+        if Self::life_stage(&kitty.lifetime) == LifeStage::Maturity {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn could_transfer(kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
+        match Self::life_stage(&kitty.lifetime) {
+            LifeStage::Young => true,
+            LifeStage::Maturity => true,
+            _ => false
+        }
     }
 
     fn mint(to: T::AccountId, kitty_id: T::Hash, new_kitty: Kitty<T::Hash, T::Balance, T::Moment>) -> Result {
