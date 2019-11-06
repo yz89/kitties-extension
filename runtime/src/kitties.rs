@@ -9,11 +9,12 @@ use runtime_io::*;
 
 const ONE_MINUTE: u64 = 60000;
 const ONE_DAY: u64 = 86400000;
-const BASE_CHILDHOOD_FACTOR: u8 = 5;
-const BASE_MANHOOD_FACTOR: u8 = 10;
+const BASE_YOUNG_FACTOR: u8 = 5;
+const BASE_MATURITY_FACTOR: u8 = 10;
 const BASE_OLDNESS_FACTOR: u8 = 5;
 
 #[derive(PartialEq)]
+#[cfg_attr(feature = "std", derive(Debug))]
 enum LifeStage {
     Young,
     Maturity,
@@ -34,10 +35,10 @@ pub struct Kitty<Hash, Balance, Moment> {
 #[derive(Encode, Decode, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "std", derive(Debug))]
 pub struct Lifetime<Moment> {
-    birth: Moment,
-    maturity: Moment,
-    oldness: Moment,
-    end: Moment,
+    birth_time: Moment,
+    maturity_time: Moment,
+    old_time: Moment,
+    end_time: Moment,
 }
 
 pub trait Trait: balances::Trait + mtp::Trait {
@@ -86,12 +87,13 @@ decl_module! {
             let random_hash = (<system::Module<T>>::random_seed(), &sender, nonce)
                 .using_encoded(<T as system::Trait>::Hashing::hash);
 
+            let mtp = <mtp::Module<T>>::median_time_past();
             let new_kitty = Kitty {
                 id: random_hash,
                 dna: random_hash,
                 price: Zero::zero(),
                 gen: 0,
-                lifetime: Self::generate_lifetime(random_hash)?,
+                lifetime: Self::generate_lifetime(mtp, random_hash)?,
             };
 
             Self::mint(sender, random_hash, new_kitty)?;
@@ -109,8 +111,9 @@ decl_module! {
             let owner = Self::owner_of(kitty_id).ok_or("No owner for this kitty")?;
             ensure!(owner == sender, "You do not own this cat");
 
+            let mtp = <mtp::Module<T>>::median_time_past();
             let mut kitty = Self::kitty(kitty_id);
-            ensure!(Self::could_transfer(&kitty),
+            ensure!(Self::could_transfer(mtp, &kitty),
                 "This cat is not in the life stage that can be transferred");
 
             kitty.price = new_price;
@@ -128,8 +131,9 @@ decl_module! {
             let owner = Self::owner_of(kitty_id).ok_or("No owner for this kitty")?;
             ensure!(owner == sender, "You do not own this kitty");
 
+            let mtp = <mtp::Module<T>>::median_time_past();
             let kitty = Self::kitty(kitty_id);
-            ensure!(Self::could_transfer(&kitty),
+            ensure!(Self::could_transfer(mtp, &kitty),
                 "This cat is not in the life stage that can be transferred");
 
             Self::transfer_from(sender, to, kitty_id)?;
@@ -178,9 +182,10 @@ decl_module! {
             let kitty_1 = Self::kitty(kitty_id_1);
             let kitty_2 = Self::kitty(kitty_id_2);
 
-            ensure!(Self::could_breed(&kitty_1),
+            let mtp = <mtp::Module<T>>::median_time_past();
+            ensure!(Self::could_breed(mtp, &kitty_1),
                 "This cat 1 is not in the life stage that can be breed");
-            ensure!(Self::could_breed(&kitty_2),
+            ensure!(Self::could_breed(mtp, &kitty_2),
                 "This cat 2 is not in the life stage that can be breed");
 
             let nonce = <Nonce>::get();
@@ -199,7 +204,7 @@ decl_module! {
                 dna: final_dna,
                 price: Zero::zero(),
                 gen: cmp::max(kitty_1.gen, kitty_2.gen) + 1,
-                lifetime: Self::generate_lifetime(final_dna)?,
+                lifetime: Self::generate_lifetime(mtp, final_dna)?,
             };
 
             Self::mint(sender, random_hash, new_kitty)?;
@@ -212,51 +217,49 @@ decl_module! {
 }
 
 impl<T: Trait> Module<T> {
-    fn generate_lifetime(dna: T::Hash) -> result::Result<Lifetime<T::Moment>, &'static str> {
-        let mtp = <mtp::Module<T>>::median_time_past();
-        let birth = mtp.saturated_into::<u64>();
-        let maturity = birth.checked_add(ONE_MINUTE * (BASE_CHILDHOOD_FACTOR + dna.as_ref()[0]) as u64)
+    fn generate_lifetime(mtp: T::Moment, dna: T::Hash) -> result::Result<Lifetime<T::Moment>, &'static str> {
+        let birth_time = mtp.saturated_into::<u64>();
+        let maturity_time = birth_time.checked_add(ONE_MINUTE * (BASE_YOUNG_FACTOR + dna.as_ref()[0]) as u64)
             .ok_or("Overflow calculating the childhood for a new kitty")?;
-        let oldness = maturity.checked_add(ONE_MINUTE * (BASE_MANHOOD_FACTOR + dna.as_ref()[1]) as u64)
+        let old_time = maturity_time.checked_add(ONE_DAY* (BASE_MATURITY_FACTOR + dna.as_ref()[1]) as u64)
             .ok_or("Overflow calculating the manhood for a new kitty")?;
-        let end = oldness.checked_add(ONE_MINUTE * (BASE_OLDNESS_FACTOR + dna.as_ref()[2]) as u64)
-            .ok_or("Overflow calculating the oldness for a new kitty")?;
+        let end_time = old_time.checked_add(ONE_MINUTE * (BASE_OLDNESS_FACTOR + dna.as_ref()[2]) as u64)
+            .ok_or("Overflow calculating the old age for a new kitty")?;
 
         let lifetime = Lifetime {
-            birth: mtp,
-            maturity: maturity.saturated_into(),
-            oldness: oldness.saturated_into(),
-            end: end.saturated_into(),
+            birth_time: mtp,
+            maturity_time: maturity_time.saturated_into(),
+            old_time: old_time.saturated_into(),
+            end_time: end_time.saturated_into(),
         };
 
         Ok(lifetime)
     }
 
-    fn life_stage(lifetime: &Lifetime<T::Moment>) -> LifeStage {
-        let mtp = <mtp::Module<T>>::median_time_past();
-        if mtp.cmp(&lifetime.birth) == cmp::Ordering::Less {
+    fn life_stage(mtp: T::Moment, lifetime: &Lifetime<T::Moment>) -> LifeStage {
+        if mtp.cmp(&lifetime.birth_time) == cmp::Ordering::Less {
             LifeStage::Invalid
-        } else if mtp.cmp(&lifetime.maturity) == cmp::Ordering::Less {
+        } else if mtp.cmp(&lifetime.maturity_time) == cmp::Ordering::Less {
             LifeStage::Young
-        } else if mtp.cmp(&lifetime.oldness) == cmp::Ordering::Less {
+        } else if mtp.cmp(&lifetime.old_time) == cmp::Ordering::Less {
             LifeStage::Maturity
-        } else if mtp.cmp(&lifetime.end) == cmp::Ordering::Less {
+        } else if mtp.cmp(&lifetime.end_time) == cmp::Ordering::Less {
             LifeStage::Oldness
         } else {
             LifeStage::Invalid
         }
     }
 
-    fn could_breed(kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
-        if Self::life_stage(&kitty.lifetime) == LifeStage::Maturity {
+    fn could_breed(mtp: T::Moment, kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
+        if Self::life_stage(mtp, &kitty.lifetime) == LifeStage::Maturity {
             true
         } else {
             false
         }
     }
 
-    fn could_transfer(kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
-        match Self::life_stage(&kitty.lifetime) {
+    fn could_transfer(mtp: T::Moment, kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
+        match Self::life_stage(mtp, &kitty.lifetime) {
             LifeStage::Young => true,
             LifeStage::Maturity => true,
             _ => false
@@ -325,5 +328,168 @@ impl<T: Trait> Module<T> {
         Self::deposit_event(RawEvent::Transferred(from, to, kitty_id));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use runtime_io::with_externalities;
+    use primitives::{H256, Blake2Hasher};
+    use support::{impl_outer_origin, assert_ok, parameter_types};
+    use sr_primitives::{traits::{BlakeTwo256, IdentityLookup}, testing::Header};
+    use sr_primitives::weights::Weight;
+    use sr_primitives::Perbill;
+    use timestamp;
+    use std::str::FromStr;
+
+    impl_outer_origin! {
+      pub enum Origin for Test {}
+    }
+
+    // For testing the module, we construct most of a mock runtime. This means
+    // first constructing a configuration type (`Test`) which `impl`s each of the
+    // configuration traits of modules we want to use.
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct Test;
+    parameter_types! {
+      pub const BlockHashCount: u64 = 250;
+      pub const MaximumBlockWeight: Weight = 1024;
+      pub const MaximumBlockLength: u32 = 2 * 1024;
+      pub const AvailableBlockRatio: Perbill = Perbill::from_percent(75);
+    }
+
+    impl system::Trait for Test {
+        type Origin = Origin;
+        type Call = ();
+        type Index = u64;
+        type BlockNumber = u64;
+        type Hash = H256;
+        type Hashing = BlakeTwo256;
+        type AccountId = u64;
+        type Lookup = IdentityLookup<Self::AccountId>;
+        type WeightMultiplierUpdate = ();
+        type Header = Header;
+        type Event = ();
+        type BlockHashCount = BlockHashCount;
+        type MaximumBlockWeight = MaximumBlockWeight;
+        type MaximumBlockLength = MaximumBlockLength;
+        type AvailableBlockRatio = AvailableBlockRatio;
+        type Version = ();
+    }
+
+    impl balances::Trait for Test {
+        type Balance = u64;
+        type OnFreeBalanceZero = ();
+        type OnNewAccount = ();
+        type TransactionPayment = ();
+        type TransferPayment = ();
+        type DustRemoval = ();
+        type Event = ();
+        type ExistentialDeposit = ();
+        type TransferFee = ();
+        type CreationFee = ();
+        type TransactionBaseFee = ();
+        type TransactionByteFee = ();
+        type WeightToFee = ();
+    }
+
+    impl timestamp::Trait for Test {
+        type Moment = u64;
+        type OnTimestampSet = ();
+        type MinimumPeriod = ();
+    }
+
+    impl mtp::Trait for Test {}
+
+    impl Trait for Test {
+        type Event = ();
+    }
+
+    type TemplateModule = Module<Test>;
+
+    // This function basically just builds a genesis storage key/value store according to
+    // our desired mockup.
+    fn new_test_ext() -> runtime_io::TestExternalities<Blake2Hasher> {
+        system::GenesisConfig::default().build_storage::<Test>().unwrap().into()
+    }
+
+    #[test]
+    fn generate_lifetime_test() {
+        with_externalities(&mut new_test_ext(), || {
+            let dna = H256::from_str(
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            ).unwrap();
+            let birth_time: u64 = 100;
+            let maturity_time = birth_time + BASE_YOUNG_FACTOR as u64 * ONE_MINUTE;
+            let old_time = maturity_time + BASE_MATURITY_FACTOR as u64 * ONE_DAY;
+            let end_time = old_time + BASE_OLDNESS_FACTOR as u64 * ONE_MINUTE;
+            assert_ok!(TemplateModule::generate_lifetime(100, dna),
+                Lifetime{ birth_time, maturity_time, old_time, end_time, });
+
+            let dna = H256::from_str(
+                "0203040000000000000000000000000000000000000000000000000000000000"
+            ).unwrap();
+            let birth_time: u64 = 100;
+            let maturity_time = birth_time + (BASE_YOUNG_FACTOR + 2) as u64 * ONE_MINUTE;
+            let old_time = maturity_time + (BASE_MATURITY_FACTOR + 3) as u64 * ONE_DAY;
+            let end_time = old_time + (BASE_OLDNESS_FACTOR + 4) as u64 * ONE_MINUTE;
+            assert_ok!(TemplateModule::generate_lifetime(100, dna),
+                Lifetime{ birth_time, maturity_time, old_time, end_time, });
+        });
+    }
+
+    #[test]
+    fn life_stage_test() {
+        with_externalities(&mut new_test_ext(), || {
+            let lifetime = Lifetime {
+                birth_time: 100,
+                maturity_time: 200,
+                old_time: 300,
+                end_time: 400,
+            };
+            assert_eq!(TemplateModule::life_stage(90, &lifetime), LifeStage::Invalid);
+            assert_eq!(TemplateModule::life_stage(100, &lifetime), LifeStage::Young);
+            assert_eq!(TemplateModule::life_stage(199, &lifetime), LifeStage::Young);
+            assert_eq!(TemplateModule::life_stage(200, &lifetime), LifeStage::Maturity);
+            assert_eq!(TemplateModule::life_stage(299, &lifetime), LifeStage::Maturity);
+            assert_eq!(TemplateModule::life_stage(300, &lifetime), LifeStage::Oldness);
+            assert_eq!(TemplateModule::life_stage(350, &lifetime), LifeStage::Oldness);
+            assert_eq!(TemplateModule::life_stage(400, &lifetime), LifeStage::Invalid);
+            assert_eq!(TemplateModule::life_stage(500, &lifetime), LifeStage::Invalid);
+        });
+    }
+
+    #[test]
+    fn life_stage_limit_test() {
+        with_externalities(&mut new_test_ext(), || {
+            let kitty = Kitty{
+                id: H256::default(),
+                dna: H256::default(),
+                price: 0,
+                gen: 0,
+                lifetime: Lifetime {
+                    birth_time: 100,
+                    maturity_time: 200,
+                    old_time: 300,
+                    end_time: 400,
+                },
+            };
+
+            assert_eq!(TemplateModule::could_breed(199, &kitty), false);
+            assert_eq!(TemplateModule::could_breed(200, &kitty), true);
+            assert_eq!(TemplateModule::could_breed(210, &kitty), true);
+            assert_eq!(TemplateModule::could_breed(300, &kitty), false);
+            assert_eq!(TemplateModule::could_breed(310, &kitty), false);
+
+            assert_eq!(TemplateModule::could_transfer(99, &kitty), false);
+            assert_eq!(TemplateModule::could_transfer(100, &kitty), true);
+            assert_eq!(TemplateModule::could_transfer(110, &kitty), true);
+            assert_eq!(TemplateModule::could_transfer(200, &kitty), true);
+            assert_eq!(TemplateModule::could_transfer(210, &kitty), true);
+            assert_eq!(TemplateModule::could_transfer(300, &kitty), false);
+            assert_eq!(TemplateModule::could_transfer(400, &kitty), false);
+        });
     }
 }

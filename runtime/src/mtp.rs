@@ -18,7 +18,6 @@ decl_storage! {
 decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
         fn on_finalize(_n: T::BlockNumber) {
-            runtime_io::print("MTP on finalize");
             let now = <timestamp::Module<T>>::get();
             Self::calculate_mtp(now);
         }
