@@ -1,5 +1,4 @@
 use rstd::prelude::*;
-use runtime_io;
 use support::{decl_module, decl_storage, StorageValue};
 
 pub trait Trait: timestamp::Trait {}
