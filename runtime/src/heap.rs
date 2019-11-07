@@ -2,9 +2,12 @@ use rstd::vec::Vec;
 use support::{Parameter, StorageValue};
 
 pub trait Compare<T> {
+    /// closer_than is whether `x` closer to the top of heap than `y`.
     fn closer_than(x: &T, y: &T) -> bool;
 }
 
+/// A generic heap, using `Compare` trait to customize the sorting type
+/// and using `StorageValue` as the storage.
 pub struct Heap<T, C, S> (rstd::marker::PhantomData<(T, C, S)>);
 
 impl<T, C, S> Heap<T, C, S>
@@ -12,12 +15,14 @@ impl<T, C, S> Heap<T, C, S>
           C: Compare<T>,
           S: StorageValue<Vec<T>, Query=Vec<T>>,
 {
+    /// Push a value into heap and update storage.
     pub fn push(item: T) {
         let mut store = S::get();
         Self::push_into_store(&mut store, item);
         S::put(store);
     }
 
+    /// Push a vector into heap once and update the storage.
     pub fn push_vec(items: Vec<T>) {
         let mut store = S::get();
         for item in items {
@@ -26,6 +31,7 @@ impl<T, C, S> Heap<T, C, S>
         S::put(store);
     }
 
+    /// Pop the top element of heap and update the storage.
     pub fn pop() -> Option<T> {
         let mut store = S::get();
         let top = Self::pop_from_store(&mut store);
@@ -33,6 +39,8 @@ impl<T, C, S> Heap<T, C, S>
         top
     }
 
+    /// Pop the top elements of heap which closer to the top of heap than
+    /// `stake` and update the storage. More efficient than `pop` one by one.
     pub fn pop_vec(stake: &T) -> Vec<T> {
         let mut store = S::get();
         let vec = Self::pop_by_stake(&mut store, stake);

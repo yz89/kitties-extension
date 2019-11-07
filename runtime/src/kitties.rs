@@ -7,8 +7,8 @@ use support::{decl_event, decl_module, decl_storage, dispatch::Result,
 use system::ensure_signed;
 use runtime_io::*;
 
-const ONE_MINUTE: u64 = 60000;
-const ONE_DAY: u64 = 86400000;
+const ONE_MINUTE: u64 = 60_000;
+const ONE_DAY: u64 = 86_400_000;
 const BASE_YOUNG_FACTOR: u8 = 5;
 const BASE_MATURITY_FACTOR: u8 = 10;
 const BASE_OLDNESS_FACTOR: u8 = 5;
@@ -219,11 +219,11 @@ decl_module! {
 impl<T: Trait> Module<T> {
     fn generate_lifetime(mtp: T::Moment, dna: T::Hash) -> result::Result<Lifetime<T::Moment>, &'static str> {
         let birth_time = mtp.saturated_into::<u64>();
-        let maturity_time = birth_time.checked_add(ONE_MINUTE * (BASE_YOUNG_FACTOR + dna.as_ref()[0]) as u64)
+        let maturity_time = birth_time.checked_add(ONE_MINUTE * u64::from(BASE_YOUNG_FACTOR + dna.as_ref()[0]))
             .ok_or("Overflow calculating the childhood for a new kitty")?;
-        let old_time = maturity_time.checked_add(ONE_DAY* (BASE_MATURITY_FACTOR + dna.as_ref()[1]) as u64)
+        let old_time = maturity_time.checked_add(ONE_DAY* u64::from(BASE_MATURITY_FACTOR + dna.as_ref()[1]))
             .ok_or("Overflow calculating the manhood for a new kitty")?;
-        let end_time = old_time.checked_add(ONE_MINUTE * (BASE_OLDNESS_FACTOR + dna.as_ref()[2]) as u64)
+        let end_time = old_time.checked_add(ONE_MINUTE * u64::from(BASE_OLDNESS_FACTOR + dna.as_ref()[2]))
             .ok_or("Overflow calculating the old age for a new kitty")?;
 
         let lifetime = Lifetime {
@@ -251,11 +251,7 @@ impl<T: Trait> Module<T> {
     }
 
     fn could_breed(mtp: T::Moment, kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
-        if Self::life_stage(mtp, &kitty.lifetime) == LifeStage::Maturity {
-            true
-        } else {
-            false
-        }
+        Self::life_stage(mtp, &kitty.lifetime) == LifeStage::Maturity
     }
 
     fn could_transfer(mtp: T::Moment, kitty: &Kitty<T::Hash, T::Balance, T::Moment>) -> bool {
