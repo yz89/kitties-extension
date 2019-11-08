@@ -1,9 +1,10 @@
 use rstd::vec::Vec;
 use support::{Parameter, StorageValue};
 
-pub trait Compare<T> {
+pub trait Compare {
+    type A;
     /// closer_than is whether `x` closer to the top of heap than `y`.
-    fn closer_than(x: &T, y: &T) -> bool;
+    fn closer_than(x: &Self::A, y: &Self::A) -> bool;
 }
 
 /// A generic heap, using `Compare` trait to customize the sorting type
@@ -12,7 +13,7 @@ pub struct Heap<T, C, S> (rstd::marker::PhantomData<(T, C, S)>);
 
 impl<T, C, S> Heap<T, C, S>
     where T: Parameter,
-          C: Compare<T>,
+          C: Compare<A=T>,
           S: StorageValue<Vec<T>, Query=Vec<T>>,
 {
     /// Push a value into heap and update storage.
@@ -22,7 +23,7 @@ impl<T, C, S> Heap<T, C, S>
         S::put(store);
     }
 
-    /// Push a vector into heap once and update the storage.
+    /// Push a vector into heap and update the storage.
     pub fn push_vec(items: Vec<T>) {
         let mut store = S::get();
         for item in items {
@@ -232,8 +233,9 @@ mod tests {
 
     struct TestCompare {}
 
-    impl<A: Ord> Compare<A> for TestCompare {
-        fn closer_than(x: &A, y: &A) -> bool { x > y }
+    impl Compare for TestCompare {
+        type A = i32;
+        fn closer_than(x: &Self::A, y: &Self::A) -> bool { x > y }
     }
 
     type MaxHeap = Heap<i32, TestCompare, HeapStore>;

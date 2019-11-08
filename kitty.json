@@ -4,9 +4,13 @@
     "dna": "H256",
     "price": "Balance",
     "gen": "u64",
-    "birth": "Moment",
-    "maturity": "Moment",
-    "oldness": "Moment",
-    "end": "Moment"
+    "birth_time": "Moment",
+    "maturity_time": "Moment",
+    "old_time": "Moment",
+    "end_time": "Moment"
+  },
+  "Lifespan": {
+    "kitty_id" : "H256",
+    "end_time": "Moment"
   }
 }

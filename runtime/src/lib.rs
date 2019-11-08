@@ -285,8 +285,8 @@ construct_runtime!(
 		Sudo: sudo,
 		// Used for the module template in `./template.rs`
 		TemplateModule: template::{Module, Call, Storage, Event<T>},
-		Kitty: kitties::{Module, Call, Storage, Event<T>},
 		MTP: mtp::{Module, Call, Storage},
+		Kitty: kitties::{Module, Call, Storage, Event<T>},
 	}
 );
 

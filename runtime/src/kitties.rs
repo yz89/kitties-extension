@@ -1,6 +1,7 @@
 use crate::mtp;
+use crate::heap::{Compare, Heap};
 use codec::{Decode, Encode};
-use rstd::{result, cmp};
+use rstd::{result, cmp, vec::Vec};
 use sr_primitives::traits::{Hash, Zero, SaturatedConversion};
 use support::{decl_event, decl_module, decl_storage, dispatch::Result,
               ensure, StorageMap, StorageValue, traits::Currency};
@@ -41,9 +42,26 @@ pub struct Lifetime<Moment> {
     end_time: Moment,
 }
 
+#[derive(Encode, Decode, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Debug))]
+pub struct Lifespan<Hash, Moment> {
+    kitty_id: Hash,
+    end_time: Moment,
+}
+
 pub trait Trait: balances::Trait + mtp::Trait {
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
+
+pub struct EndTimeCompare<T> (rstd::marker::PhantomData<(T)>);
+
+impl<T: timestamp::Trait> Compare for EndTimeCompare<T> {
+    type A = Lifespan<<T as system::Trait>::Hash, T::Moment>;
+    fn closer_than(x: &Self::A, y: &Self::A) -> bool { x.end_time < y.end_time }
+}
+
+type LifespanHeap<T> = Heap<Lifespan<<T as system::Trait>::Hash, <T as timestamp::Trait>::Moment>,
+    EndTimeCompare<T>, LifespanArray<T>>;
 
 decl_event!(
     pub enum Event<T>
@@ -71,6 +89,9 @@ decl_storage! {
         OwnedKittiesArray get(kitty_of_owner_by_index): map (T::AccountId, u64) => T::Hash;
         OwnedKittiesCount get(owned_kitty_count): map T::AccountId => u64;
         OwnedKittiesIndex: map T::Hash => u64;
+
+        // As a storage only use for LifespanHeap. Do not modify it directly.
+        LifespanArray: Vec<Lifespan<T::Hash, T::Moment>>;
 
         Nonce: u64;
     }
@@ -213,6 +234,11 @@ decl_module! {
 
             Ok(())
         }
+
+        fn on_finalize(_n: T::BlockNumber) {
+            let mtp = <mtp::Module<T>>::median_time_past();
+            Self::remove_expired_kitties(mtp);
+        }
     }
 }
 
@@ -275,7 +301,7 @@ impl<T: Trait> Module<T> {
         let new_all_kitties_count = all_kitties_count.checked_add(1)
             .ok_or("Overflow adding a new kitty to total supply")?;
 
-        <Kitties<T>>::insert(kitty_id, new_kitty);
+        <Kitties<T>>::insert(kitty_id, &new_kitty);
         <KittyOwner<T>>::insert(kitty_id, &to);
 
         <AllKittiesArray<T>>::insert(all_kitties_count, kitty_id);
@@ -285,6 +311,11 @@ impl<T: Trait> Module<T> {
         <OwnedKittiesArray<T>>::insert((to.clone(), owned_kitty_count), kitty_id);
         <OwnedKittiesCount<T>>::insert(&to, new_owned_kitty_count);
         <OwnedKittiesIndex<T>>::insert(kitty_id, owned_kitty_count);
+
+        <LifespanHeap<T>>::push(Lifespan {
+            kitty_id,
+            end_time: new_kitty.lifetime.end_time,
+        });
 
         Self::deposit_event(RawEvent::Created(to, kitty_id));
 
@@ -324,6 +355,59 @@ impl<T: Trait> Module<T> {
         Self::deposit_event(RawEvent::Transferred(from, to, kitty_id));
 
         Ok(())
+    }
+
+    fn remove_expired_kitties(mtp: T::Moment) {
+        let stake = Lifespan {
+            kitty_id: T::Hash::default(),
+            end_time: mtp,
+        };
+        let expired_kitties = <LifespanHeap<T>>::pop_vec(&stake);
+        for lifespan in expired_kitties {
+            Self::burn_token(lifespan.kitty_id);
+        }
+    }
+
+    fn burn_token(kitty_id: T::Hash) {
+        // delete kitty
+        let count = Self::all_kitties_count();
+        if count == 0 {
+            // print err and return
+            runtime_io::print("burn_token(): There is no kitty.")
+        }
+        let last_kitty_index = count - 1;
+        let last_kitty_id = Self::kitty_by_index(last_kitty_index);
+        let kitty_index = <AllKittiesIndex<T>>::get(&kitty_id);
+        <AllKittiesArray<T>>::insert(kitty_index, &last_kitty_id);
+        <AllKittiesArray<T>>::remove(last_kitty_index);
+        <AllKittiesIndex<T>>::insert(last_kitty_id, kitty_index);
+        <AllKittiesIndex<T>>::remove(&kitty_id);
+        AllKittiesCount::put(last_kitty_index);
+
+        <Kitties<T>>::remove(kitty_id);
+
+        // delete owner ship
+        let owner = Self::owner_of(&kitty_id);
+        if owner.is_none() {
+            // print err and return
+            runtime_io::print("burn_token(): No owner for this kitty")
+        }
+        let owner = owner.unwrap();
+        let owned_count = Self::owned_kitty_count(&owner);
+        if owned_count == 0 {
+            // print err and return
+            runtime_io::print("burn_token(): There is no ownership information")
+        }
+        let last_owned_index = owned_count - 1;
+        let last_owned_id = Self::kitty_of_owner_by_index((owner.clone(), last_owned_index));
+        let owned_index = <OwnedKittiesIndex<T>>::get(&kitty_id);
+        <OwnedKittiesArray<T>>::insert((owner.clone(), owned_index), &last_owned_id);
+        <OwnedKittiesArray<T>>::remove((owner.clone(), last_owned_index));
+        <OwnedKittiesIndex<T>>::insert(last_owned_id, owned_index);
+        <OwnedKittiesIndex<T>>::remove(&kitty_id);
+        <OwnedKittiesCount<T>>::insert(owner, last_owned_index);
+
+        <KittyOwner<T>>::remove(kitty_id);
     }
 }
 
@@ -460,7 +544,7 @@ mod tests {
     #[test]
     fn life_stage_limit_test() {
         with_externalities(&mut new_test_ext(), || {
-            let kitty = Kitty{
+            let kitty = Kitty {
                 id: H256::default(),
                 dna: H256::default(),
                 price: 0,
